@@ -688,23 +688,23 @@ except Exception as e:
 
 SR_fig = go.Figure()
 SR_fig.add_trace(go.Scattergl(
-    y = stroke_data['Rate'],
-    x = stroke_data['onset_index'],
+    y = list(stroke_data['Rate']),
+    x = list(stroke_data['onset_index']),
     mode = 'markers', 
     name = 'Stroke Rate (SPM)', 
     marker_color = 'blue'
 ))
 SR_fig.add_trace(go.Scattergl(
-    y = stroke_data['speed'],
-    x = stroke_data['onset_index'], 
+    y = list(stroke_data['speed']),
+    x = list(stroke_data['onset_index']), 
     mode = 'markers', 
     name = 'Speed (m/s)', 
     yaxis = 'y2'
 ))
 
 SR_fig.add_trace(go.Scattergl(
-    y = stroke_data['eWPS'], 
-    x = stroke_data['onset_index'],
+    y = list(stroke_data['eWPS']), 
+    x = list(stroke_data['onset_index']),
     mode = 'markers', 
     name = 'E Work Per Stroke', 
     yaxis = 'y2', 
@@ -713,8 +713,8 @@ SR_fig.add_trace(go.Scattergl(
 ))
 
 SR_fig.add_trace(go.Scattergl(
-    y = stroke_data['max speed'], 
-    x = stroke_data['onset_index'],
+    y = list(stroke_data['max speed']), 
+    x = list(stroke_data['onset_index']),
     mode = 'markers', 
     name = 'Max Speed (m/s)', 
     yaxis = 'y2',  
@@ -722,8 +722,8 @@ SR_fig.add_trace(go.Scattergl(
 ))
 
 SR_fig.add_trace(go.Scattergl(
-    y = stroke_data['min speed'], 
-    x = stroke_data['onset_index'],
+    y = list(stroke_data['min speed']), 
+    x = list(stroke_data['onset_index']),
     mode = 'markers', 
     name = 'Min Speed (m/s)', 
     yaxis = 'y2', 
