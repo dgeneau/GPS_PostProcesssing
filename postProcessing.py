@@ -979,7 +979,7 @@ slope, intercept, r, p, se = linregress(rate_list, peak_vals)
 max_rate = -(intercept/slope)
 
 
-
+_='''
 AV_fig = make_subplots(specs=[[{"secondary_y": True}]])
 AV_fig.add_trace(go.Scattergl(
               y = stroke_data['DPS'][stroke_data['Rate']>15],#abs(stroke_data['accel']),
@@ -1051,7 +1051,7 @@ AV_fig.update_yaxes(range=[0, 10], secondary_y=True)
 AV_fig.update_xaxes(range=[15, 50]) 
 
 
-_='''
+
 
 av_plot, av_metrics = st.columns([4,2])
 with av_plot:
