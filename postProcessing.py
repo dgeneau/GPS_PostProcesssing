@@ -1121,7 +1121,7 @@ map = go.Figure(go.Scattermapbox(
                 title="Speed",      # Title for the colorbar
                 x=0.95,            # Adjust x-position of colorbar if needed
                 y=0.5,
-                titlefont=dict(color='white'),  # Change title font color to white
+                #titlefont=dict(color='white'),  # Change title font color to white
                 tickfont=dict(color='white'),   # Change tick font color to white
                 len=0.8
             )),
