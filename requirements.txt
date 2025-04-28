@@ -6,7 +6,6 @@ PyWavelets
 reportlab
 Requests
 scipy
-math
 streamlit
 streamlit_plotly_events
 streamlit.components.v1
