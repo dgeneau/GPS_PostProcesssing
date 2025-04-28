@@ -5,7 +5,6 @@ plotly
 PyWavelets
 reportlab
 Requests
-math
 scipy
 zoneinfo
 streamlit
