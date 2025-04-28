@@ -20,7 +20,6 @@ import datetime
 from zoneinfo import ZoneInfo
 import requests
 from streamlit_js_eval import streamlit_js_eval
-import streamlit.components.v1 as components
 import webbrowser
 
   
@@ -47,7 +46,7 @@ with title:
 CLIENT_ID = "9b430ac6-b8e8-475e-9d9c-c99484b3535d"
 TENANT_ID = "0f3fdf7c-bc2c-4ba0-9ae4-14b4718b01e7"
 AUTHORITY = f"https://login.microsoftonline.com/{TENANT_ID}"
-REDIRECT_URI = "https://gpspostprocesssing-tqnxe5mzjzk5eu2rf8gbmq.streamlit.app/"
+REDIRECT_URI = "http://localhost:8501/"
 AUTH_ENDPOINT = f"{AUTHORITY}/oauth2/v2.0/authorize"
 TOKEN_ENDPOINT = f"{AUTHORITY}/oauth2/v2.0/token"
 SCOPES = ["https://graph.microsoft.com/Files.Read.All"]
@@ -221,7 +220,7 @@ if not is_token_valid():
     # Build the authorization URL
     auth_url = AUTH_URL + "?" + "&".join([f"{k}={v}" for k, v in auth_params.items()])
     # immediately send the user there
-	st.markdown(
+    st.markdown(
         f'<a href="{auth_url}" target="_self" '
         'style="display:inline-block; padding:0.5em 1em; '
         'background-color:#0078D4; color:white; border-radius:4px; text-decoration:none;">'
@@ -229,7 +228,6 @@ if not is_token_valid():
         unsafe_allow_html=True,
     )
     st.stop()
-
 
 
 
