@@ -19,12 +19,19 @@ from scipy import stats
 import datetime
 from zoneinfo import ZoneInfo
 import requests
+from streamlit_js_eval import streamlit_js_eval
+import streamlit.components.v1 as components
+import webbrowser
 
+  
+st.set_page_config(layout='wide')
 
+timezone = streamlit_js_eval(js_expressions='Intl.DateTimeFormat().resolvedOptions().timeZone', key="get_timezone")
+if not timezone:
+    st.write('No Zone Detected')
+    timezone = "America/Los_Angeles" 
 
-
-st.set_page_config(layout="wide")
-
+st.write(f'Dectected Timezone: {timezone}')
 image, title = st.columns([1,9])
 
 with image: 
@@ -32,7 +39,223 @@ with image:
 with title:
     st.title('GPS Post Processing')
 
+# === HTML + JS for MSAL login ===
 
+
+# App configuration - Replace with your values from Azure Portal
+
+CLIENT_ID = "9b430ac6-b8e8-475e-9d9c-c99484b3535d"
+TENANT_ID = "0f3fdf7c-bc2c-4ba0-9ae4-14b4718b01e7"
+AUTHORITY = f"https://login.microsoftonline.com/{TENANT_ID}"
+REDIRECT_URI = "http://localhost:8501/"
+AUTH_ENDPOINT = f"{AUTHORITY}/oauth2/v2.0/authorize"
+TOKEN_ENDPOINT = f"{AUTHORITY}/oauth2/v2.0/token"
+SCOPES = ["https://graph.microsoft.com/Files.Read.All"]
+TOKEN_URL = f"https://login.microsoftonline.com/{TENANT_ID}/oauth2/v2.0/token"
+AUTH_URL = f"https://login.microsoftonline.com/{TENANT_ID}/oauth2/v2.0/authorize"
+
+
+
+# Initialize session state for tokens
+if "access_token" not in st.session_state:
+    st.session_state.access_token = None
+if "token_expires_at" not in st.session_state:
+    st.session_state.token_expires_at = None
+if "master" not in st.session_state:
+    st.session_state.master = None
+if 'password' not in st.session_state:
+    st.session_state.password = None
+
+def is_token_valid():
+    """Check if the current token is valid"""
+    if not st.session_state.access_token:
+        return False
+    if not st.session_state.token_expires_at:
+        return False
+    # Check if token is expired (with 5 minute buffer)
+    return st.session_state.token_expires_at - 300
+
+def find_shared_file_by_name(filename="Live GPS Master.xlsx"):
+    """Find a shared file by name"""
+    if not is_token_valid():
+        st.error("Authentication required")
+        return None
+
+    headers = {
+        "Authorization": f"Bearer {st.session_state.access_token}"
+    }
+
+    url = "https://graph.microsoft.com/v1.0/me/drive/sharedWithMe"
+    response = requests.get(url, headers=headers)
+
+    if response.status_code == 200:
+        items = response.json().get("value", [])
+        for item in items:
+            remote_item = item.get("remoteItem", {})
+            if item.get("name") == filename and "file" in remote_item:
+                return {
+                    "name": item["name"],
+                    "webUrl": item["webUrl"],
+                    "id": remote_item["id"],
+                    "driveId": remote_item["parentReference"]["driveId"]
+                }
+        st.warning(f"'{filename}' not found in shared files.")
+        return None
+    else:
+        st.error(f"Failed to retrieve shared files: {response.status_code} - {response.text}")
+        return None
+
+def get_shared_excel_file(drive_id, item_id):
+    headers = {
+        "Authorization": f"Bearer {st.session_state.access_token}"
+    }
+
+    url = f"https://graph.microsoft.com/v1.0/drives/{drive_id}/items/{item_id}"
+    response = requests.get(url, headers=headers)
+
+    if response.status_code == 200:
+        metadata = response.json()
+        download_url = metadata.get("@microsoft.graph.downloadUrl")
+        if download_url:
+            return pd.read_excel(download_url)
+        else:
+            st.error("Download URL not available.")
+    else:
+        st.error(f"Failed to retrieve file metadata: {response.text}")
+
+def get_password(drive_id, item_id):
+    headers = {
+        "Authorization": f"Bearer {st.session_state.access_token}"
+    }
+
+    url = f"https://graph.microsoft.com/v1.0/drives/{drive_id}/items/{item_id}"
+    response = requests.get(url, headers=headers)
+
+    if response.status_code == 200:
+        metadata = response.json()
+        download_url = metadata.get("@microsoft.graph.downloadUrl")
+        if download_url:
+            return pd.read_excel(download_url, sheet_name=1)
+        else:
+            st.error("Download URL not available.")
+    else:
+        st.error(f"Failed to retrieve file metadata: {response.text}")
+
+def get_onedrive_file(file_path):
+    """Get file from OneDrive using Microsoft Graph API"""
+    if not is_token_valid():
+        st.error("Authentication required")
+        return None
+        
+    headers = {
+        "Authorization": f"Bearer {st.session_state.access_token}",
+        "Content-Type": "application/json"
+    }
+    
+    # Get file metadata to retrieve download URL
+    graph_api_url = f"https://graph.microsoft.com/v1.0/me/drive/root:{file_path}"
+    response = requests.get(graph_api_url, headers=headers)
+    
+    
+    if response.status_code == 200:
+        file_data = response.json()
+        if '@microsoft.graph.downloadUrl' in file_data:
+            download_url = file_data['@microsoft.graph.downloadUrl']
+            try:
+                df = pd.read_excel(download_url)
+                return df
+            except Exception as e:
+                st.error(f"Error reading Excel file: {str(e)}")
+                return None
+        else:
+            st.error("Could not get download URL for the file")
+            return None
+    else:
+        st.error(f"Error accessing file: {response.status_code} - {response.text}")
+        return None
+
+# Check for OAuth authorization code in URL
+query_params = st.query_params
+if "code" in query_params:
+    # Exchange authorization code for access token
+    code = query_params.get("code")
+    
+    token_data = {
+        "client_id": CLIENT_ID,
+        "scope": "https://graph.microsoft.com/Files.Read.All",
+        "code": code,
+        "redirect_uri": REDIRECT_URI,
+        "grant_type": "authorization_code"
+    }
+    
+    token_response = requests.post(TOKEN_URL, data=token_data)
+    
+    if token_response.status_code == 200:
+        token_info = token_response.json()
+        st.session_state.access_token = token_info["access_token"]
+        st.session_state.token_expires_at = datetime.datetime.now().timestamp() + token_info["expires_in"]
+        
+        # Clear the URL parameters
+        st.query_params.clear()
+        st.rerun()
+    else:
+        st.error(f"Error getting access token: {token_response.text}")
+        # Clear the URL parameters
+        st.query_params.clear()
+
+# Main app UI
+if not is_token_valid():
+    st.write("### Connect to Microsoft OneDrive")
+    st.write("You need to authenticate to access your OneDrive files.")
+    
+    #if st.button("Sign in with Microsoft"):
+    # Simplified auth URL without state parameter
+    auth_params = {
+        "client_id": CLIENT_ID,
+        "response_type": "code",
+        "redirect_uri": REDIRECT_URI,
+        "scope": "https://graph.microsoft.com/Files.Read.All",
+        "response_mode": "query"
+    }
+    
+    # Build the authorization URL
+    auth_url = AUTH_URL + "?" + "&".join([f"{k}={v}" for k, v in auth_params.items()])
+    # immediately send the user there
+    st.markdown(
+        f'<a href="{auth_url}" target="_self" '
+        'style="display:inline-block; padding:0.5em 1em; '
+        'background-color:#0078D4; color:white; border-radius:4px; text-decoration:none;">'
+        '🔐 Sign in with Microsoft</a>',
+        unsafe_allow_html=True,
+    )
+    st.stop()
+
+
+
+else:
+    st.success("Connected to Microsoft OneDrive")
+    files = find_shared_file_by_name()
+    file_info = find_shared_file_by_name()
+
+    if file_info:
+
+        with st.spinner("Loading file from OneDrive..."):
+            df = get_shared_excel_file(file_info["driveId"], file_info["id"])
+            login_info = get_password(file_info["driveId"], file_info["id"])
+            if df is not None:
+                st.session_state.master = df
+                st.session_state.password = login_info
+                
+                
+        # Logout button
+        if st.sidebar.button("Sign Out"):
+            st.session_state.access_token = None
+            st.session_state.token_expires_at = None
+            st.rerun()
+
+
+
+################################
 
 def lowpass(signal, highcut, frequency):
     '''
@@ -256,6 +479,21 @@ def boxplot_upper_whisker(data):
 
 
 #fetch data from API
+
+#pulling from the master sheet
+
+#master = #pd.read_excel('/Users/danielgeneau/Library/CloudStorage/OneDrive-SharedLibraries-RowingCanadaAviron/HP - Staff - SSSM/General/Biomechanics/Sensor Project/Live GPS Master.xlsx')
+master = st.session_state.master
+login_data = st.session_state.password
+login_data = login_data['Password'].iloc[0]
+master = master.dropna(subset=['Start Time'])
+session_list = master['Date'].astype(str) +', ' + master['Boat Class']
+session  = st.selectbox('select session for analysis', session_list)
+
+session_details = master[master['Date'].astype(str) == session.split(',')[0]]
+session_details = session_details[session_details['Boat Class']== session.split(' ')[-1]]
+
+_='''
 start_enter, ende_enter = st.columns(2)
 with start_enter:
     start_date_time = st.text_input('Enter Starting Date and Time')
@@ -269,6 +507,11 @@ device_select = st.selectbox('Select Device to Pull', ['22621',
 
 
 st.write("Example Date and Time Format: 2025-04-09T10:15:00")
+'''
+
+start_date_time = f'{session.split(',')[0]}T{session_details['Start Time'].iloc[0]}'
+end_date_time = f'{session.split(',')[0]}T{session_details['End Time'].iloc[0]}'
+device_select = session_details['Sensor'].iloc[0].split('-')[-1]
 
 
 def get_preprocessed_data(
@@ -348,7 +591,7 @@ def convert_iso8601_to_utc_string(iso_time_str: str) -> str:
     
     # If there's no timezone info, assume America/Los_Angeles
     if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=ZoneInfo("America/Los_Angeles"))
+        dt = dt.replace(tzinfo=ZoneInfo(timezone))
         
     # Convert to UTC
     dt_utc = dt.astimezone(datetime.timezone.utc)
@@ -366,65 +609,66 @@ if st.sidebar.button("Reset Data"):
     st.session_state.data = None
     st.session_state.data_pulled = False
 
+with st.spinner('Loading Performance Data... '):
 
-if pull and not st.session_state.data_pulled:
-
-
-    client_id = 'M9d3J3axpMU9z9xMfaqNtOB4BdxmsyPMK2v63yBC'
-    client_secret = 'POh9pZ1djjNOtS8rX9FzTYHAv3ARYIvaht9pfXlKPc3axcTaCPoxYehS3OVOGhRUn9ahaujugmftpajWC7zAW0LoxVEBMhhEIg86D4Yp5g05KfT9SLGSrin6oyd0SNnd'
-
-    #Your device manager account info here
-    username = "dgeneau@csipacific.ca"
-    password = "Joegeneau!1959"
+    if pull and not st.session_state.data_pulled:
 
 
-    data_login = {
-    'grant_type': 'password',
-    'username': username,
-    'password': password
-    }
+        client_id = 'M9d3J3axpMU9z9xMfaqNtOB4BdxmsyPMK2v63yBC'
+        client_secret = 'POh9pZ1djjNOtS8rX9FzTYHAv3ARYIvaht9pfXlKPc3axcTaCPoxYehS3OVOGhRUn9ahaujugmftpajWC7zAW0LoxVEBMhhEIg86D4Yp5g05KfT9SLGSrin6oyd0SNnd'
 
-    response = requests.post('https://api.asi.swiss/oauth2/token/',
-                            data=data_login,
-                            verify=False,
-                            allow_redirects=False,
-                            auth=(client_id, client_secret)).json()
-
-    access_token = response['access_token']
+        #Your device manager account info here
+        username = "dgeneau@csipacific.ca"
+        password = login_data
 
 
-    device_id = device_select
+        data_login = {
+        'grant_type': 'password',
+        'username': username,
+        'password': password
+        }
+
+        response = requests.post('https://api.asi.swiss/oauth2/token/',
+                                data=data_login,
+                                verify=False,
+                                allow_redirects=False,
+                                auth=(client_id, client_secret)).json()
+
+        access_token = response['access_token']
 
 
-    ACCESS_TOKEN = access_token
-    START_TIME = convert_iso8601_to_utc_string(start_date_time) # Example ISO 8601 format
-    STOP_TIME = convert_iso8601_to_utc_string(end_date_time)  # Example ISO 8601 format
+        device_id = device_select
+
+
+        ACCESS_TOKEN = access_token
+        START_TIME = convert_iso8601_to_utc_string(start_date_time) # Example ISO 8601 format
+        STOP_TIME = convert_iso8601_to_utc_string(end_date_time)  # Example ISO 8601 format
 
 
 
 
-    try:
-        df = get_all_preprocessed_data(device_id, ACCESS_TOKEN, START_TIME, STOP_TIME)
-        
-        if not df.empty:
-            # Process timestamps
-            timestamp_seconds = df['gnss.timestamp'] / 1000
-            local_time = [
-                datetime.datetime.utcfromtimestamp(ts)
-                .replace(tzinfo=datetime.timezone.utc)
-                .astimezone(ZoneInfo("America/Los_Angeles"))
-                for ts in timestamp_seconds
-            ]
-            df['gnss.timestampPC'] = local_time
+        try:
+            df = get_all_preprocessed_data(device_id, ACCESS_TOKEN, START_TIME, STOP_TIME)
+            
+            if not df.empty:
+                # Process timestamps
+                timestamp_seconds = df['gnss.timestamp'] / 1000
+                local_time = [
+                    datetime.datetime.utcfromtimestamp(ts)
+                    .replace(tzinfo=datetime.timezone.utc)
+                    .astimezone(ZoneInfo(timezone))
+                    for ts in timestamp_seconds
+                ]
+                df['gnss.timestampPC'] = local_time
 
-            # Save to session_state
-            st.session_state.data = df
-            st.session_state.data_pulled = True  
-            st.success("Data pulled and stored successfully.")
+                # Save to session_state
+                st.session_state.data = df
+                st.session_state.data_pulled = True  
+                st.success("Data pulled and stored successfully.")
 
-    except Exception as e:
-        st.error(f"Error during data pull: {e}")
-        st.session_state.data_pulled = False
+        except Exception as e:
+            st.error(f"Error during data pull: {e}")
+            st.session_state.data_pulled = False
 
 # Use the data later in your app
 if st.session_state.data is not None:
@@ -466,8 +710,9 @@ prog_dict = {
                     "W1x":"4.672897196",
                 }
 
-prog = st.sidebar.selectbox('Select Boat Classs', prog_dict)
-
+#prog = st.sidebar.selectbox('Select Boat Classs', prog_dict)
+prog = session_details['Boat Class'].iloc[0]
+st.sidebar.write(prog)
 prog_vel = prog_dict[prog]
 #Upsampling
 factor = 3
@@ -482,6 +727,55 @@ if 'gnss.speed' in data.columns:
    
 
 #data['speed'] = lowpass(data['speed'], 1.5, 10)
+
+
+######## Testing Jerk for stroke Rate
+
+accel_og = np.diff(data["speed"]) / (1 / 10)
+jerk_og = lowpass(np.diff(accel_og)/(1/10), 0.3, 10)
+jerk_roll = pd.Series(jerk_og).rolling(100).max()
+
+raw_crossings = np.where((jerk_og[:-1] < 0) & (jerk_og[1:] >= 0))[0]
+crossings = [i for i in raw_crossings if jerk_roll.iloc[i] > 0.2]
+#crossings = np.where((jerk_og[:-1] < 0) & (jerk_og[1:] >= 0))[0]
+
+jerk_fig = go.Figure()
+jerk_fig.add_trace(go.Scattergl(
+    y = jerk_og, 
+    mode = 'lines', 
+    name = 'Jerk', 
+))
+jerk_fig.add_trace(go.Scattergl(
+    y = jerk_roll, 
+    mode = 'lines', 
+    name = 'Jerk', 
+))
+jerk_fig.add_trace(go.Scattergl(
+    y = jerk_og[crossings],
+    x= crossings ,
+    mode = 'markers', 
+    name = 'stroke', 
+))
+jerk_fig.add_trace(go.Scattergl(
+    y = 60/(np.diff(crossings)/10),
+    x= crossings[1:] ,
+    mode = 'markers', 
+    name = 'stroke rate', 
+))
+jerk_fig.add_trace(go.Scattergl(
+    y = accel_og, 
+    mode = 'lines', 
+    name = 'accel', 
+))
+#st.plotly_chart(jerk_fig)
+
+
+
+
+
+
+
+########
 
 if original_length > 2:
     old_indices = np.arange(original_length)
@@ -688,23 +982,23 @@ except Exception as e:
 
 SR_fig = go.Figure()
 SR_fig.add_trace(go.Scattergl(
-    y = list(stroke_data['Rate']),
-    x = list(stroke_data['onset_index']),
+    y = stroke_data['Rate'],
+    x = stroke_data['onset_index'],
     mode = 'markers', 
     name = 'Stroke Rate (SPM)', 
     marker_color = 'blue'
 ))
 SR_fig.add_trace(go.Scattergl(
-    y = list(stroke_data['speed']),
-    x = list(stroke_data['onset_index']), 
+    y = stroke_data['speed'],
+    x = stroke_data['onset_index'], 
     mode = 'markers', 
     name = 'Speed (m/s)', 
     yaxis = 'y2'
 ))
 
 SR_fig.add_trace(go.Scattergl(
-    y = list(stroke_data['eWPS']), 
-    x = list(stroke_data['onset_index']),
+    y = stroke_data['eWPS'], 
+    x = stroke_data['onset_index'],
     mode = 'markers', 
     name = 'E Work Per Stroke', 
     yaxis = 'y2', 
@@ -713,8 +1007,8 @@ SR_fig.add_trace(go.Scattergl(
 ))
 
 SR_fig.add_trace(go.Scattergl(
-    y = list(stroke_data['max speed']), 
-    x = list(stroke_data['onset_index']),
+    y = stroke_data['max speed'], 
+    x = stroke_data['onset_index'],
     mode = 'markers', 
     name = 'Max Speed (m/s)', 
     yaxis = 'y2',  
@@ -722,8 +1016,8 @@ SR_fig.add_trace(go.Scattergl(
 ))
 
 SR_fig.add_trace(go.Scattergl(
-    y = list(stroke_data['min speed']), 
-    x = list(stroke_data['onset_index']),
+    y = stroke_data['min speed'], 
+    x = stroke_data['onset_index'],
     mode = 'markers', 
     name = 'Min Speed (m/s)', 
     yaxis = 'y2', 
@@ -767,6 +1061,7 @@ else:
 SR_fig.update_layout(title = '<b>Select Data Range For Analysis</b>')
 
 #Analyzing Cropped Data
+
 stroke_data = stroke_data.iloc[stroke_on:stroke_off].reset_index(drop=True)
 
 
@@ -794,15 +1089,7 @@ train_summary = train_summary.reset_index()
 train_summary = train_summary.rename(columns={'index': 'Metric'})
 
 
-#data = data.iloc[stream_start:stream_end].reset_index(drop=True)
 up_frame = up_frame.iloc[stream_start:stream_end].reset_index(drop=True)
-
-#st.line_chart(up_frame['speed'])
-#st.line_chart(data['speed'].iloc[int(stream_start/factor):int((stream_end+200)/factor)].reset_index(drop=True))
-#st.write(data['gnss.timestamp'].iloc[int(stream_end/factor)]- data['gnss.timestamp'].iloc[int(stream_start/factor)])
-#st.write( data['gnss.timestampPC'].iloc[int(stream_start/factor)].split('-')[0:-1])
-#st.write( data['gnss.timestampPC'].iloc[int(stream_end/factor)].split('-')[0:-1])
-
 
 stroke_data['Distance Piece'] = round(stroke_data['Distance'] - stroke_data['Distance'].iloc[0])
 max_dist = stroke_data['Distance Piece'].max()
@@ -898,10 +1185,6 @@ for val in range(1,len(stroke_data['onset_index'])):
     if (stroke_data['onset_index'][val] - stroke_data['onset_index'][val-1])<=int(40*factor):
         stroke_number += 1
         
-
-        
-
-        #speed_env = speed_plot[stroke_data['onset_index'][val-1]:stroke_data['onset_index'][val]]
         speed_env = upsample_speed[stroke_data['onset_index'][val-1]:stroke_data['onset_index'][val]]
 
 
@@ -951,7 +1234,6 @@ stroke_plot.update_layout(
         colorscale='Viridis'
     )
 )
-#st.plotly_chart(stroke_plot)
 
 _='''
 DPS vs stroke rate profiling
@@ -979,7 +1261,7 @@ slope, intercept, r, p, se = linregress(rate_list, peak_vals)
 max_rate = -(intercept/slope)
 
 
-_='''
+
 AV_fig = make_subplots(specs=[[{"secondary_y": True}]])
 AV_fig.add_trace(go.Scattergl(
               y = stroke_data['DPS'][stroke_data['Rate']>15],#abs(stroke_data['accel']),
@@ -1051,7 +1333,7 @@ AV_fig.update_yaxes(range=[0, 10], secondary_y=True)
 AV_fig.update_xaxes(range=[15, 50]) 
 
 
-
+_='''
 
 av_plot, av_metrics = st.columns([4,2])
 with av_plot:
@@ -1121,7 +1403,7 @@ map = go.Figure(go.Scattermapbox(
                 title="Speed",      # Title for the colorbar
                 x=0.95,            # Adjust x-position of colorbar if needed
                 y=0.5,
-                #titlefont=dict(color='white'),  # Change title font color to white
+                titlefont=dict(color='white'),  # Change title font color to white
                 tickfont=dict(color='white'),   # Change tick font color to white
                 len=0.8
             )),
