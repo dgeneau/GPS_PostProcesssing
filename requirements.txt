@@ -6,7 +6,7 @@ PyWavelets
 reportlab
 Requests
 scipy
-backports.zoneinfo
+math
 streamlit
 streamlit_plotly_events
 streamlit.components.v1
