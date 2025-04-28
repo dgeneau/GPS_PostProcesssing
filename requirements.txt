@@ -5,6 +5,10 @@ plotly
 PyWavelets
 reportlab
 Requests
+math
 scipy
+zoneinfo
 streamlit
 streamlit_plotly_events
+streamlit.components.v1
+streamlit_js_eval
