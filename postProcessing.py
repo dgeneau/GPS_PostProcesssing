@@ -221,24 +221,23 @@ if not is_token_valid():
     auth_url = AUTH_URL + "?" + "&".join([f"{k}={v}" for k, v in auth_params.items()])
     # immediately send the user there
     st.markdown(
-    f'''
-    <a
-      href="{auth_url}"
-      target="_blank"
-      rel="noopener noreferrer"
-      style="
-        display:inline-block;
-        padding:0.5em 1em;
-        background-color:#0078D4;
-        color:white;
-        border-radius:4px;
-        text-decoration:none;
-      "
-    >
-      🔐 Sign in with Microsoft
-    </a>
-    ''',
-    unsafe_allow_html=True)
+	    f'''
+	    <a
+	      href="{auth_url}"
+	      target="_blank"
+	      rel="noopener noreferrer"
+	      style="
+	        display:inline-block;
+	        padding:0.5em 1em;
+	        background-color:#0078D4;
+	        color:white;
+	        border-radius:4px;
+	        text-decoration:none;
+	      "
+	    >
+	      🔐 Sign in with Microsoft
+	    </a>
+	    ''',unsafe_allow_html=True)
     _='''
     st.markdown(
         f'<a href="{auth_url}" target="_self" '
