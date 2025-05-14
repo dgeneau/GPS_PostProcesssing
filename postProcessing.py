@@ -20,7 +20,7 @@ import datetime
 from zoneinfo import ZoneInfo
 import requests
 from streamlit_js_eval import streamlit_js_eval
-import webbrowser
+
 
   
 st.set_page_config(layout='wide')
@@ -41,15 +41,21 @@ with title:
 # === HTML + JS for MSAL login ===
 
 
+
 # App configuration - Replace with your values from Azure Portal
 
-CLIENT_ID = "9b430ac6-b8e8-475e-9d9c-c99484b3535d"
-TENANT_ID = "0f3fdf7c-bc2c-4ba0-9ae4-14b4718b01e7"
+CLIENT_ID = "c95019d2-f203-44fa-b393-2053ab0bbe1a"#"9b430ac6-b8e8-475e-9d9c-c99484b3535d"
+TENANT_ID = "9798e3e4-0f1a-4f96-91ad-b31a4229413a"#"0f3fdf7c-bc2c-4ba0-9ae4-14b4718b01e7"
 AUTHORITY = f"https://login.microsoftonline.com/{TENANT_ID}"
-REDIRECT_URI = "https://gpspostprocesssing-tqnxe5mzjzk5eu2rf8gbmq.streamlit.app/"
+REDIRECT_URI = "http://localhost:8501/"
 AUTH_ENDPOINT = f"{AUTHORITY}/oauth2/v2.0/authorize"
 TOKEN_ENDPOINT = f"{AUTHORITY}/oauth2/v2.0/token"
-SCOPES = ["https://graph.microsoft.com/Files.Read.All"]
+#SCOPES = ["https://graph.microsoft.com/Files.Read.All"]
+SCOPES = [
+    "https://graph.microsoft.com/Files.Read.All",
+    "https://graph.microsoft.com/Team.ReadBasic.All",
+    "https://graph.microsoft.com/Channel.ReadBasic.All",
+]
 TOKEN_URL = f"https://login.microsoftonline.com/{TENANT_ID}/oauth2/v2.0/token"
 AUTH_URL = f"https://login.microsoftonline.com/{TENANT_ID}/oauth2/v2.0/authorize"
 
@@ -74,7 +80,24 @@ def is_token_valid():
     # Check if token is expired (with 5 minute buffer)
     return st.session_state.token_expires_at - 300
 
-def find_shared_file_by_name(filename="Live GPS Master.xlsx"):
+def find_drive_file_by_name(filename="CSI_LiveGPS_Master.xlsx"):
+    headers = {"Authorization": f"Bearer {st.session_state.access_token}"}
+    url = f"https://graph.microsoft.com/v1.0/me/drive/root/search(q='{filename}')"
+    resp = requests.get(url, headers=headers)
+    resp.raise_for_status()
+    for item in resp.json().get("value", []):
+        # match exact name and ensure it’s a file
+        if item.get("name") == filename and item.get("file"):
+            return {
+                "name": item["name"],
+                "id": item["id"],
+                "driveId": item["parentReference"]["driveId"],
+                "webUrl": item["webUrl"]
+            }
+    st.warning(f"No owned file named '{filename}' found in your drive.")
+    return None
+
+def find_shared_file_by_name(filename="CSI_LiveGPS_Master.xlsx"):
     """Find a shared file by name"""
     if not is_token_valid():
         st.error("Authentication required")
@@ -103,6 +126,68 @@ def find_shared_file_by_name(filename="Live GPS Master.xlsx"):
     else:
         st.error(f"Failed to retrieve shared files: {response.status_code} - {response.text}")
         return None
+
+def list_drive_root_items():
+    """Return a list of files/folders in your OneDrive root."""
+    headers = {"Authorization": f"Bearer {st.session_state.access_token}"}
+    url = "https://graph.microsoft.com/v1.0/me/drive/root/children"
+    resp = requests.get(url, headers=headers)
+    resp.raise_for_status()
+    return resp.json().get("value", [])
+
+def list_team_channels(team_id):
+
+    headers = {"Authorization": f"Bearer {st.session_state.access_token}"}
+    url = f"https://graph.microsoft.com/v1.0/teams/{team_id}/channels"
+    resp = requests.get(url, headers=headers)
+    resp.raise_for_status()
+    return resp.json().get("value", [])
+
+def list_joined_teams():
+    headers = {"Authorization": f"Bearer {st.session_state.access_token}"}
+    resp = requests.get("https://graph.microsoft.com/v1.0/me/joinedTeams", headers=headers)
+    resp.raise_for_status()
+    return resp.json().get("value", [])
+
+def get_teams_channel_file(team_id: str, channel_id: str, file_path: str) -> pd.DataFrame:
+    """
+    Download an Excel file from a specific Teams channel folder.
+    
+    - team_id:    the O365 Group ID for your Team
+    - channel_id: the specific channel GUID
+    - file_path:  path under the channel root, e.g.
+                  'CSI_LiveGPS_Master.xlsx'
+                  or 'Subfolder/CSI_LiveGPS_Master.xlsx'
+    """
+    # 1) get the channel’s folder info
+    headers = {"Authorization": f"Bearer {st.session_state.access_token}"}
+    resp = requests.get(
+        f"https://graph.microsoft.com/v1.0/teams/{team_id}/channels/{channel_id}/filesFolder",
+        headers=headers
+    )
+    resp.raise_for_status()
+    folder = resp.json()
+    
+    # 2) extract driveId & folderId correctly
+    drive_id  = folder["parentReference"]["driveId"]
+    folder_id = folder["id"]
+    
+    # 3) locate your file *inside* that folder
+    #    note: we refer to /items/{folder_id}:/<path>:/ to scope under the channel folder
+    item_resp = requests.get(
+        f"https://graph.microsoft.com/v1.0/drives/{drive_id}/items/{folder_id}:/{file_path}:/",
+        headers=headers
+    )
+    item_resp.raise_for_status()
+    item = item_resp.json()
+    
+    # 4) grab the one-time download URL and read it
+    download_url = item.get("@microsoft.graph.downloadUrl")
+    if not download_url:
+        raise ValueError("Graph did not return a download URL for that file.")
+    data = pd.read_excel(download_url)
+    login_info = pd.read_excel(download_url, sheet_name=1)
+    return data, login_info
 
 def get_shared_excel_file(drive_id, item_id):
     headers = {
@@ -213,16 +298,15 @@ if not is_token_valid():
         "client_id": CLIENT_ID,
         "response_type": "code",
         "redirect_uri": REDIRECT_URI,
-        "scope": "https://graph.microsoft.com/Files.Read.All",
+        "scope": " ".join(SCOPES),
         "response_mode": "query"
     }
     
     # Build the authorization URL
     auth_url = AUTH_URL + "?" + "&".join([f"{k}={v}" for k, v in auth_params.items()])
     # immediately send the user there
- 
     st.markdown(
-        f'<a href="{auth_url}" target="_blank" '
+        f'<a href="{auth_url}" target="_self" '
         'style="display:inline-block; padding:0.5em 1em; '
         'background-color:#0078D4; color:white; border-radius:4px; text-decoration:none;">'
         '🔐 Sign in with Microsoft</a>',
@@ -235,17 +319,16 @@ if not is_token_valid():
 
 else:
     st.success("Connected to Microsoft OneDrive")
-    files = find_shared_file_by_name()
-    file_info = find_shared_file_by_name()
-
-    if file_info:
-
-        with st.spinner("Loading file from OneDrive..."):
-            df = get_shared_excel_file(file_info["driveId"], file_info["id"])
-            login_info = get_password(file_info["driveId"], file_info["id"])
-            if df is not None:
-                st.session_state.master = df
-                st.session_state.password = login_info
+    
+    
+    Team_ID =  '228dcd2e-e1b5-482c-88ed-423f923f24f1'
+    Channel_ID = '19:ccdd950a8eec4e7ba71fbb72ec8e1d60@thread.tacv2'
+    with st.spinner("Loading file from OneDrive..."):
+        df, login_info = get_teams_channel_file(Team_ID, Channel_ID, 'Live GPS Files/CSI_LiveGPS_Master.xlsx')
+        
+        if df is not None:
+            st.session_state.master = df
+            st.session_state.password = login_info
                 
                 
         # Logout button
@@ -253,6 +336,7 @@ else:
             st.session_state.access_token = None
             st.session_state.token_expires_at = None
             st.rerun()
+
 
 
 
@@ -483,16 +567,18 @@ def boxplot_upper_whisker(data):
 
 #pulling from the master sheet
 
-#master = #pd.read_excel('/Users/danielgeneau/Library/CloudStorage/OneDrive-SharedLibraries-RowingCanadaAviron/HP - Staff - SSSM/General/Biomechanics/Sensor Project/Live GPS Master.xlsx')
+#master = pd.read_excel('/Users/danielgeneau/Library/CloudStorage/OneDrive-SharedLibraries-RowingCanadaAviron/HP - Staff - SSSM/General/Biomechanics/Sensor Project/Live GPS Master.xlsx')
 master = st.session_state.master
 login_data = st.session_state.password
-login_data = login_data['Password'].iloc[0]
+#login_data =  pd.read_excel('/Users/danielgeneau/Library/CloudStorage/OneDrive-SharedLibraries-RowingCanadaAviron/HP - Staff - SSSM/General/Biomechanics/Sensor Project/Live GPS Master.xlsx', sheet_name=1)
+#login_data = login_data['Password'].iloc[0]
 master = master.dropna(subset=['Start Time'])
-session_list = master['Date'].astype(str) +', ' + master['Boat Class']
+session_list = master['Date'].astype(str) +',' + master['Boat Class'] +',' + master['Details']
 session  = st.selectbox('select session for analysis', session_list)
 
 session_details = master[master['Date'].astype(str) == session.split(',')[0]]
-session_details = session_details[session_details['Boat Class']== session.split(' ')[-1]]
+session_details = session_details[session_details['Boat Class']== session.split(',')[-2]]
+session_details = session_details[session_details['Details'] == session.split(',')[-1]]
 
 _='''
 start_enter, ende_enter = st.columns(2)
@@ -505,7 +591,6 @@ device_select = st.selectbox('Select Device to Pull', ['22621',
 '22953', 
 '22993', 
 '22999'])
-
 
 st.write("Example Date and Time Format: 2025-04-09T10:15:00")
 '''
@@ -620,7 +705,9 @@ with st.spinner('Loading Performance Data... '):
 
         #Your device manager account info here
         username = "dgeneau@csipacific.ca"
-        password = login_data
+        login_pass = login_data['Password'].iloc[0]
+        password = login_pass
+        
 
 
         data_login = {
@@ -635,13 +722,13 @@ with st.spinner('Loading Performance Data... '):
                                 allow_redirects=False,
                                 auth=(client_id, client_secret)).json()
 
-        access_token = response['access_token']
+        ACCESS_TOKEN = response['access_token']
 
 
         device_id = device_select
 
 
-        ACCESS_TOKEN = access_token
+        
         START_TIME = convert_iso8601_to_utc_string(start_date_time) # Example ISO 8601 format
         STOP_TIME = convert_iso8601_to_utc_string(end_date_time)  # Example ISO 8601 format
 
@@ -769,9 +856,6 @@ jerk_fig.add_trace(go.Scattergl(
     name = 'accel', 
 ))
 #st.plotly_chart(jerk_fig)
-
-
-
 
 
 
@@ -1094,7 +1178,7 @@ up_frame = up_frame.iloc[stream_start:stream_end].reset_index(drop=True)
 
 stroke_data['Distance Piece'] = round(stroke_data['Distance'] - stroke_data['Distance'].iloc[0])
 max_dist = stroke_data['Distance Piece'].max()
-interval_step = 250
+interval_step = st.sidebar.number_input('Input Interval Window',100)
 intervals = round(max_dist/interval_step)
 
 
@@ -1305,7 +1389,7 @@ AV_fig.add_trace(go.Scattergl(
               mode = 'markers'), 
               secondary_y=True)
 
-
+_='''
 parab = np.array(slope*np.array(range(15,int(max_rate)+1)) + intercept)*np.array(range(15,int(max_rate)+1))
 
 AV_fig.add_shape(
@@ -1332,7 +1416,7 @@ AV_fig.update_yaxes(title_text="Effective Power", secondary_y=True)
 AV_fig.update_yaxes(range=[5, 20], secondary_y=False)  # Primary y-axis range
 AV_fig.update_yaxes(range=[0, 10], secondary_y=True) 
 AV_fig.update_xaxes(range=[15, 50]) 
-
+'''
 
 _='''
 
@@ -1381,7 +1465,7 @@ with metric4:
     st.metric('Average DPS (m)', round(average_DPS,2))
     st.metric('Section Distance (m)(speed)', round(np.mean(up_frame['speed'])*len(up_frame)/10/factor,2))
 
-st.metric('Section Time', sec_to_split(dps_distance/np.mean(up_frame['speed'])))
+st.metric('Section Time', sec_to_split(round(np.mean(up_frame['speed'])*len(up_frame)/10/factor,2)/average_speed))
 
     
 
