@@ -20,6 +20,7 @@ import datetime
 from zoneinfo import ZoneInfo
 import requests
 from streamlit_js_eval import streamlit_js_eval
+from urllib.parse import urlencode
 
 
   
@@ -303,7 +304,7 @@ if not is_token_valid():
     }
     
     # Build the authorization URL
-    auth_url = AUTH_URL + "?" + "&".join([f"{k}={v}" for k, v in auth_params.items()])
+    auth_url = AUTH_URL + "?" + urlencode(auth_params)
     # immediately send the user there
     st.markdown(
         f'<a href="{auth_url}" target="_self" '
