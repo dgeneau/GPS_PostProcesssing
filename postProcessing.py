@@ -20,8 +20,11 @@ import datetime
 from zoneinfo import ZoneInfo
 import requests
 from streamlit_js_eval import streamlit_js_eval
-from urllib.parse import urlencode
 
+
+import base64
+import hashlib
+import secrets
 
   
 st.set_page_config(layout='wide')
@@ -48,7 +51,7 @@ with title:
 CLIENT_ID = "c95019d2-f203-44fa-b393-2053ab0bbe1a"#"9b430ac6-b8e8-475e-9d9c-c99484b3535d"
 TENANT_ID = "9798e3e4-0f1a-4f96-91ad-b31a4229413a"#"0f3fdf7c-bc2c-4ba0-9ae4-14b4718b01e7"
 AUTHORITY = f"https://login.microsoftonline.com/{TENANT_ID}"
-REDIRECT_URI = "https://gpspostprocesssing-tqnxe5mzjzk5eu2rf8gbmq.streamlit.app/"
+REDIRECT_URI = "http://localhost:8501/"
 AUTH_ENDPOINT = f"{AUTHORITY}/oauth2/v2.0/authorize"
 TOKEN_ENDPOINT = f"{AUTHORITY}/oauth2/v2.0/token"
 #SCOPES = ["https://graph.microsoft.com/Files.Read.All"]
@@ -71,6 +74,21 @@ if "master" not in st.session_state:
     st.session_state.master = None
 if 'password' not in st.session_state:
     st.session_state.password = None
+
+def _make_pkce_pair():
+    # 1) create a high-entropy secret
+    code_verifier = base64.urlsafe_b64encode(secrets.token_bytes(32)).rstrip(b"=").decode()
+    # 2) derive the challenge
+    digest = hashlib.sha256(code_verifier.encode()).digest()
+    code_challenge = base64.urlsafe_b64encode(digest).rstrip(b"=").decode()
+    return code_verifier, code_challenge
+
+
+if "code_verifier" not in st.session_state:
+    verifier, challenge = _make_pkce_pair()
+    st.session_state.code_verifier  = verifier    # ← PKCE
+    st.session_state.code_challenge = challenge   # ← PKCE
+
 
 def is_token_valid():
     """Check if the current token is valid"""
@@ -263,17 +281,21 @@ def get_onedrive_file(file_path):
 query_params = st.query_params
 if "code" in query_params:
     # Exchange authorization code for access token
-    code = query_params.get("code")
+    #code = query_params.get("code")
     
+    code = query_params["code"][0]
+
     token_data = {
-        "client_id": CLIENT_ID,
-        "scope": "https://graph.microsoft.com/Files.Read.All",
-        "code": code,
-        "redirect_uri": REDIRECT_URI,
-        "grant_type": "authorization_code"
+        "grant_type":    "authorization_code",
+        "client_id":     CLIENT_ID,
+        "code":          code,
+        "redirect_uri":  REDIRECT_URI,
+        "scope":         " ".join(SCOPES),
+        "code_verifier": st.session_state.code_verifier,  # ← PKCE
     }
     
     token_response = requests.post(TOKEN_URL, data=token_data)
+    st.write(token_response)
     
     if token_response.status_code == 200:
         token_info = token_response.json()
@@ -296,15 +318,17 @@ if not is_token_valid():
     #if st.button("Sign in with Microsoft"):
     # Simplified auth URL without state parameter
     auth_params = {
-        "client_id": CLIENT_ID,
-        "response_type": "code",
-        "redirect_uri": REDIRECT_URI,
-        "scope": " ".join(SCOPES),
-        "response_mode": "query"
+        "client_id":             CLIENT_ID,
+        "response_type":         "code",
+        "redirect_uri":          REDIRECT_URI,
+        "response_mode":         "query",
+        "scope":                 " ".join(SCOPES),
+        "code_challenge":        st.session_state.code_challenge,   # ← PKCE
+        "code_challenge_method": "S256",                            # ← PKCE
     }
     
     # Build the authorization URL
-    auth_url = AUTH_URL + "?" + urlencode(auth_params)
+    auth_url = AUTH_URL + "?" + "&".join([f"{k}={v}" for k, v in auth_params.items()])
     # immediately send the user there
     st.markdown(
         f'<a href="{auth_url}" target="_self" '
@@ -734,8 +758,6 @@ with st.spinner('Loading Performance Data... '):
         STOP_TIME = convert_iso8601_to_utc_string(end_date_time)  # Example ISO 8601 format
 
 
-
-
         try:
             df = get_all_preprocessed_data(device_id, ACCESS_TOKEN, START_TIME, STOP_TIME)
             
@@ -769,7 +791,6 @@ else:
 
 
 
-        
 
 #########################################################################
 _='''
