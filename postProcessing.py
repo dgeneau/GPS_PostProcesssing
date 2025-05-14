@@ -1122,46 +1122,28 @@ except Exception as e:
 
 SR_fig = go.Figure()
 SR_fig.add_trace(go.Scattergl(
-    y = stroke_data['Rate'],
-    x = stroke_data['onset_index'],
+    y = list(stroke_data['Rate']),
+    x = list(stroke_data['onset_index']),
     mode = 'markers', 
     name = 'Stroke Rate (SPM)', 
     marker_color = 'blue'
 ))
 SR_fig.add_trace(go.Scattergl(
-    y = stroke_data['speed'],
-    x = stroke_data['onset_index'], 
+    y = list(stroke_data['speed']),
+    x = list(stroke_data['onset_index']), 
     mode = 'markers', 
     name = 'Speed (m/s)', 
     yaxis = 'y2'
 ))
 
 SR_fig.add_trace(go.Scattergl(
-    y = stroke_data['eWPS'], 
-    x = stroke_data['onset_index'],
+    y = list(stroke_data['eWPS']), 
+    x = list(stroke_data['onset_index']),
     mode = 'markers', 
     name = 'E Work Per Stroke', 
     yaxis = 'y2', 
     marker_color = 'green',
     opacity=0.5
-))
-
-SR_fig.add_trace(go.Scattergl(
-    y = stroke_data['max speed'], 
-    x = stroke_data['onset_index'],
-    mode = 'markers', 
-    name = 'Max Speed (m/s)', 
-    yaxis = 'y2',  
-    marker_color = 'red'
-))
-
-SR_fig.add_trace(go.Scattergl(
-    y = stroke_data['min speed'], 
-    x = stroke_data['onset_index'],
-    mode = 'markers', 
-    name = 'Min Speed (m/s)', 
-    yaxis = 'y2', 
-    marker_color = 'orange'
 ))
 
 
@@ -1543,7 +1525,7 @@ map = go.Figure(go.Scattermapbox(
                 title="Speed",      # Title for the colorbar
                 x=0.95,            # Adjust x-position of colorbar if needed
                 y=0.5,
-                titlefont=dict(color='white'),  # Change title font color to white
+                #titlefont=dict(color='white'),  # Change title font color to white
                 tickfont=dict(color='white'),   # Change tick font color to white
                 len=0.8
             )),
