@@ -47,7 +47,7 @@ with title:
 CLIENT_ID = "c95019d2-f203-44fa-b393-2053ab0bbe1a"#"9b430ac6-b8e8-475e-9d9c-c99484b3535d"
 TENANT_ID = "9798e3e4-0f1a-4f96-91ad-b31a4229413a"#"0f3fdf7c-bc2c-4ba0-9ae4-14b4718b01e7"
 AUTHORITY = f"https://login.microsoftonline.com/{TENANT_ID}"
-REDIRECT_URI = "http://localhost:8501/"
+REDIRECT_URI = "https://gpspostprocesssing-tqnxe5mzjzk5eu2rf8gbmq.streamlit.app/"
 AUTH_ENDPOINT = f"{AUTHORITY}/oauth2/v2.0/authorize"
 TOKEN_ENDPOINT = f"{AUTHORITY}/oauth2/v2.0/token"
 #SCOPES = ["https://graph.microsoft.com/Files.Read.All"]
