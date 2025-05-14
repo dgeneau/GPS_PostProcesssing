@@ -9,4 +9,5 @@ scipy
 streamlit
 streamlit_plotly_events
 streamlit_js_eval
+streamlit.components.v1
 
