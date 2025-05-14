@@ -20,11 +20,8 @@ import datetime
 from zoneinfo import ZoneInfo
 import requests
 from streamlit_js_eval import streamlit_js_eval
+import streamlit.components.v1 as components 
 
-
-import base64
-import hashlib
-import secrets
 
   
 st.set_page_config(layout='wide')
@@ -51,7 +48,7 @@ with title:
 CLIENT_ID = "c95019d2-f203-44fa-b393-2053ab0bbe1a"#"9b430ac6-b8e8-475e-9d9c-c99484b3535d"
 TENANT_ID = "9798e3e4-0f1a-4f96-91ad-b31a4229413a"#"0f3fdf7c-bc2c-4ba0-9ae4-14b4718b01e7"
 AUTHORITY = f"https://login.microsoftonline.com/{TENANT_ID}"
-REDIRECT_URI = "https://gpspostprocesssing-tqnxe5mzjzk5eu2rf8gbmq.streamlit.app/"
+REDIRECT_URI = "http://localhost:8501/"
 AUTH_ENDPOINT = f"{AUTHORITY}/oauth2/v2.0/authorize"
 TOKEN_ENDPOINT = f"{AUTHORITY}/oauth2/v2.0/token"
 #SCOPES = ["https://graph.microsoft.com/Files.Read.All"]
@@ -66,8 +63,7 @@ AUTH_URL = f"https://login.microsoftonline.com/{TENANT_ID}/oauth2/v2.0/authorize
 
 
 # Initialize session state for tokens
-if "access_token" not in st.session_state:
-    st.session_state.access_token = None
+
 if "token_expires_at" not in st.session_state:
     st.session_state.token_expires_at = None
 if "master" not in st.session_state:
@@ -75,19 +71,61 @@ if "master" not in st.session_state:
 if 'password' not in st.session_state:
     st.session_state.password = None
 
-def _make_pkce_pair():
-    # 1) create a high-entropy secret
-    code_verifier = base64.urlsafe_b64encode(secrets.token_bytes(32)).rstrip(b"=").decode()
-    # 2) derive the challenge
-    digest = hashlib.sha256(code_verifier.encode()).digest()
-    code_challenge = base64.urlsafe_b64encode(digest).rstrip(b"=").decode()
-    return code_verifier, code_challenge
 
 
-if "code_verifier" not in st.session_state:
-    verifier, challenge = _make_pkce_pair()
-    st.session_state.code_verifier  = verifier    # ← PKCE
-    st.session_state.code_challenge = challenge   # ← PKCE
+from msal import PublicClientApplication
+
+
+
+# ───────────────
+# 1) Create the MSAL public client
+app = PublicClientApplication(CLIENT_ID, authority=AUTHORITY)
+
+# 2) If we don’t yet have a token, kick off device flow
+if "access_token" not in st.session_state:
+
+    flow = app.initiate_device_flow(scopes=SCOPES)
+    if "user_code" not in flow:
+        st.error("Failed to start device flow: " + flow.get("error_description", ""))
+        st.stop()
+
+    # 1) **Auto-open** the verification URL in a new tab (may be blocked by pop-up blockers)
+    components.html(f"""
+      <script>
+        window.open("{flow['verification_uri']}", "_blank");
+      </script>
+    """, height=0)
+
+    # 2) Fallback clickable link & code
+    st.markdown("### Sign in to Microsoft Graph")
+    st.markdown(
+        f"**1.** If a new tab didn’t open, [click here to go to the device login page]({flow['verification_uri']})\n\n"
+        f"**2.** Enter code: `**{flow['user_code']}**`"
+    )
+
+    # 3) Poll in the background, showing a spinner
+    with st.spinner("Waiting for you to complete authentication…"):
+        result = app.acquire_token_by_device_flow(flow)  # blocks & polls
+
+    if "access_token" in result:
+        st.session_state.access_token     = result["access_token"]
+        st.session_state.token_expires_at = datetime.datetime.now().timestamp() + result["expires_in"]
+        st.rerun()
+    else:
+        st.error("Login failed: " + result.get("error_description", ""))
+        st.stop()
+
+# ───────────────
+# 4) Now you have a valid token
+st.success("Connected to Microsoft Graph!")
+
+
+
+
+
+
+
+
 
 
 def is_token_valid():
@@ -276,26 +314,22 @@ def get_onedrive_file(file_path):
     else:
         st.error(f"Error accessing file: {response.status_code} - {response.text}")
         return None
-
+_='''
 # Check for OAuth authorization code in URL
 query_params = st.query_params
 if "code" in query_params:
     # Exchange authorization code for access token
-    #code = query_params.get("code")
+    code = query_params.get("code")
     
-    code = query_params["code"][0]
-
     token_data = {
-        "grant_type":    "authorization_code",
-        "client_id":     CLIENT_ID,
-        "code":          code,
-        "redirect_uri":  REDIRECT_URI,
-        "scope":         " ".join(SCOPES),
-        "code_verifier": st.session_state.code_verifier,  # ← PKCE
+        "client_id": CLIENT_ID,
+        "scope": "https://graph.microsoft.com/Files.Read.All",
+        "code": code,
+        "redirect_uri": REDIRECT_URI,
+        "grant_type": "authorization_code"
     }
     
     token_response = requests.post(TOKEN_URL, data=token_data)
-    st.write(token_response)
     
     if token_response.status_code == 200:
         token_info = token_response.json()
@@ -318,13 +352,11 @@ if not is_token_valid():
     #if st.button("Sign in with Microsoft"):
     # Simplified auth URL without state parameter
     auth_params = {
-        "client_id":             CLIENT_ID,
-        "response_type":         "code",
-        "redirect_uri":          REDIRECT_URI,
-        "response_mode":         "query",
-        "scope":                 " ".join(SCOPES),
-        "code_challenge":        st.session_state.code_challenge,   # ← PKCE
-        "code_challenge_method": "S256",                            # ← PKCE
+        "client_id": CLIENT_ID,
+        "response_type": "code",
+        "redirect_uri": REDIRECT_URI,
+        "scope": " ".join(SCOPES),
+        "response_mode": "query"
     }
     
     # Build the authorization URL
@@ -340,10 +372,11 @@ if not is_token_valid():
     
     st.stop()
 
-
-
+'''
+if st.session_state.access_token is None:
+    st.warning('Please connect')
 else:
-    st.success("Connected to Microsoft OneDrive")
+    #st.success("Connected to Microsoft OneDrive")
     
     
     Team_ID =  '228dcd2e-e1b5-482c-88ed-423f923f24f1'
